@@ -9,6 +9,8 @@ export type IndicatorPlot =
       id: string;
       name: string;
       pane: IndicatorPane;
+      paneId?: string;
+      paneName?: string;
       style: 'line' | 'histogram';
       color?: string;
       values: NumericSeries;
@@ -17,6 +19,8 @@ export type IndicatorPlot =
       id: string;
       name: string;
       pane: IndicatorPane;
+      paneId?: string;
+      paneName?: string;
       style: 'band';
       color?: string;
       upper: NumericSeries;

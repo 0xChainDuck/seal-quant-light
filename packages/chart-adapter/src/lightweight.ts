@@ -27,6 +27,8 @@ export type ChartSeries =
       id: string;
       name: string;
       pane: 'price' | 'oscillator';
+      paneId: string;
+      paneName: string;
       type: 'line' | 'histogram';
       color?: string;
       data: Array<LinePoint | HistogramPoint>;
@@ -76,12 +78,17 @@ function toLineData(series: BarSeries, values: Array<number | null>): LinePoint[
 export function toIndicatorSeries(series: BarSeries, results: IndicatorResult[]): ChartSeries[] {
   return results.flatMap((result) =>
     result.plots.flatMap((plot) => {
+      const paneId = plot.pane === 'price' ? 'price' : (plot.paneId ?? result.id);
+      const paneName = plot.pane === 'price' ? 'Price' : (plot.paneName ?? result.name);
+
       if (plot.style === 'band') {
         return [
           {
             id: `${plot.id}-upper`,
             name: `${plot.name} Upper`,
             pane: plot.pane,
+            paneId,
+            paneName,
             type: 'line' as const,
             ...(plot.color ? { color: plot.color } : {}),
             data: toLineData(series, plot.upper)
@@ -90,6 +97,8 @@ export function toIndicatorSeries(series: BarSeries, results: IndicatorResult[])
             id: `${plot.id}-middle`,
             name: `${plot.name} Middle`,
             pane: plot.pane,
+            paneId,
+            paneName,
             type: 'line' as const,
             color: '#94a3b8',
             data: toLineData(series, plot.middle)
@@ -98,6 +107,8 @@ export function toIndicatorSeries(series: BarSeries, results: IndicatorResult[])
             id: `${plot.id}-lower`,
             name: `${plot.name} Lower`,
             pane: plot.pane,
+            paneId,
+            paneName,
             type: 'line' as const,
             ...(plot.color ? { color: plot.color } : {}),
             data: toLineData(series, plot.lower)
@@ -110,6 +121,8 @@ export function toIndicatorSeries(series: BarSeries, results: IndicatorResult[])
           id: plot.id,
           name: plot.name,
           pane: plot.pane,
+          paneId,
+          paneName,
           type: plot.style,
           ...(plot.color ? { color: plot.color } : {}),
           data: toLineData(series, plot.values)
