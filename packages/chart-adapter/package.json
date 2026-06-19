@@ -1,0 +1,21 @@
+{
+  "name": "@seal-quant/chart-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "node -e \"console.log('no tests')\""
+  },
+  "dependencies": {
+    "@seal-quant/core": "workspace:*",
+    "@seal-quant/indicators": "workspace:*"
+  }
+}

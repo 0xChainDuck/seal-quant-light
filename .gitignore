@@ -1,0 +1,15 @@
+node_modules
+.pnpm-store
+dist
+.vite
+.turbo
+.DS_Store
+*.log
+data/cache/*
+output/reports/*
+output/trades/*
+output/equity/*
+!data/cache/.gitkeep
+!output/reports/.gitkeep
+!output/trades/.gitkeep
+!output/equity/.gitkeep

@@ -1,0 +1,21 @@
+{
+  "name": "@seal-quant/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "node -e \"console.log('no tests')\""
+  },
+  "dependencies": {
+    "@fastify/cors": "latest",
+    "@fastify/websocket": "latest",
+    "@seal-quant/core": "workspace:*",
+    "@seal-quant/indicators": "workspace:*",
+    "@seal-quant/market": "workspace:*",
+    "fastify": "latest"
+  }
+}

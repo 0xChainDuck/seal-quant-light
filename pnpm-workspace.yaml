@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+
+onlyBuiltDependencies:
+  - bufferutil
+  - ccxt
+  - esbuild
+
+verifyDepsBeforeRun: false
+allowBuilds:
+  bufferutil: true
+  ccxt: true
+  esbuild: true
