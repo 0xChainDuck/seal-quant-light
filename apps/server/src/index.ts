@@ -1,3 +1,4 @@
+import './env.js';
 import { buildServer } from './app.js';
 
 const port = Number.parseInt(process.env.PORT ?? '8787', 10);

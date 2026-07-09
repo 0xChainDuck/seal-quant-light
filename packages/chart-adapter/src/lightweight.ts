@@ -22,6 +22,10 @@ export type LinePoint = {
   value: number;
 };
 
+export type WhitespacePoint = {
+  time: LightweightTime;
+};
+
 export type ChartSeries =
   | {
       id: string;
@@ -31,7 +35,10 @@ export type ChartSeries =
       paneName: string;
       type: 'line' | 'histogram';
       color?: string;
-      data: Array<LinePoint | HistogramPoint>;
+      autoscaleMode?: 'visible-range';
+      priceFormat?: 'volume';
+      priceScaleId?: string;
+      data: Array<LinePoint | HistogramPoint | WhitespacePoint>;
     };
 
 function toChartTime(ts: number): LightweightTime {
@@ -60,15 +67,17 @@ export function toVolume(series: BarSeries): HistogramPoint[] {
   });
 }
 
-function toLineData(series: BarSeries, values: Array<number | null>): LinePoint[] {
+function toLineData(series: BarSeries, values: Array<number | null>): Array<LinePoint | WhitespacePoint> {
   return values.flatMap((value, index) => {
+    const time = toChartTime(series.ts[index] ?? 0);
+
     if (value === null) {
-      return [];
+      return [{ time }];
     }
 
     return [
       {
-        time: toChartTime(series.ts[index] ?? 0),
+        time,
         value
       }
     ];

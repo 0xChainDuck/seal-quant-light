@@ -39,6 +39,26 @@ export type BarSeries = {
 
 export type NumericSeries = Array<number | null>;
 
+export type OrderBookLevel = {
+  price: number;
+  amount: number;
+};
+
+export type OrderBookSnapshot = {
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  ts: number;
+  nonce?: number;
+};
+
+export type TradeTick = {
+  id?: string;
+  ts: number;
+  price: number;
+  amount: number;
+  side?: 'buy' | 'sell';
+};
+
 export type SeriesPoint = {
   ts: number;
   value: number | null;

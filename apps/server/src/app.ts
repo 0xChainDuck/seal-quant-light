@@ -1,10 +1,30 @@
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
-import { barsToSeries } from '@seal-quant/core';
+import { barsToSeries, timeframeToMs } from '@seal-quant/core';
 import { listIndicators } from '@seal-quant/indicators';
-import { fetchMarketSymbols, fetchOhlcv, getSupportedExchanges } from '@seal-quant/market';
+import {
+  fetchCoinGlassAggregateOpenInterestHistory,
+  fetchCoinGlassOpenInterestHistory,
+  fetchMarketSymbols,
+  fetchOpenInterestHistory,
+  fetchOpenInterestSnapshot,
+  fetchOhlcv,
+  getSupportedExchanges,
+  requestCoinGlass,
+  watchMarketRealtime
+} from '@seal-quant/market';
 import Fastify from 'fastify';
-import { parseLimit, parseMarketSelection, parsePollMs } from './query.js';
+import {
+  parseLimit,
+  parseHistoryDays,
+  parseMarketChannels,
+  parseMarketSelection,
+  parseOpenInterestLimit,
+  parseOpenInterestSource,
+  parseOrderBookLimit,
+  parseTimestamp,
+  parseTradeLimit
+} from './query.js';
 
 type RequestWithQuery = {
   query?: unknown;
@@ -35,6 +55,32 @@ function getSocket(connection: WebSocketConnection): SocketLike {
   return 'socket' in connection ? connection.socket : connection;
 }
 
+function coinGlassPathFromUrl(url: string | undefined): string {
+  const parsed = new URL(url ?? '/', 'http://localhost');
+  const prefix = '/api/coinglass';
+  const path = parsed.pathname.startsWith(prefix)
+    ? parsed.pathname.slice(prefix.length)
+    : parsed.pathname;
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+
+  if (normalized === '/' || normalized.includes('://') || normalized.startsWith('//')) {
+    throw new Error('Invalid CoinGlass path');
+  }
+
+  return normalized.startsWith('/api/') ? normalized : `/api${normalized}`;
+}
+
+function queryWithoutApiKey(query: Partial<Record<string, string>>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && key.toLowerCase() !== 'api_key') {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
+
 export function buildServer() {
   const app = Fastify({
     logger: {
@@ -61,8 +107,11 @@ export function buildServer() {
   }));
 
   app.get('/api/markets', async (request) => {
-    const selection = parseMarketSelection(readQuery(request));
-    const symbols = await fetchMarketSymbols(selection.exchange, selection.marketType);
+    const query = readQuery(request);
+    const selection = parseMarketSelection(query);
+    const symbols = await fetchMarketSymbols(selection.exchange, selection.marketType, {
+      refresh: query.refresh === '1' || query.refresh === 'true'
+    });
 
     return {
       exchange: selection.exchange,
@@ -75,14 +124,23 @@ export function buildServer() {
     const query = readQuery(request);
     const selection = parseMarketSelection(query);
     const limit = parseLimit(query.limit);
-    const bars = await fetchOhlcv({
+    const before = parseTimestamp(query.before);
+    const since = before ? Math.max(0, before - timeframeToMs(selection.timeframe) * (limit + 1)) : undefined;
+    const fetchedBars = await fetchOhlcv({
       ...selection,
-      limit
+      limit: before ? limit + 1 : limit,
+      ...(since !== undefined ? { since } : {})
     });
+    const bars = before
+      ? fetchedBars
+          .filter((bar) => bar.ts < before)
+          .slice(-limit)
+      : fetchedBars;
 
     return {
       ...selection,
       limit,
+      ...(before !== undefined ? { before } : {}),
       bars,
       series: barsToSeries({
         bars,
@@ -91,61 +149,114 @@ export function buildServer() {
     };
   });
 
+  app.get('/api/coinglass/open-interest/aggregate', async (request) => {
+    const query = readQuery(request);
+    const selection = parseMarketSelection(query);
+    const days = parseHistoryDays(query.days);
+    const limit = parseOpenInterestLimit(query.limit);
+    const since = Date.now() - days * 24 * 60 * 60_000;
+    const history = await fetchCoinGlassAggregateOpenInterestHistory({
+      ...selection,
+      limit,
+      since
+    });
+
+    return {
+      ...selection,
+      metric: 'aggregateOpenInterest',
+      source: 'coinglass',
+      settle: 'USDT',
+      days,
+      limit,
+      sourceTimeframe: history?.sourceTimeframe ?? selection.timeframe,
+      points: history?.points ?? []
+    };
+  });
+
+  app.get('/api/coinglass/*', async (request, reply) => {
+    const query = readQuery(request);
+    const upstream = await requestCoinGlass(coinGlassPathFromUrl(request.url), {
+      query: queryWithoutApiKey(query)
+    });
+
+    reply.header('content-type', upstream.contentType);
+    return reply.code(upstream.status).send(upstream.body);
+  });
+
+  app.get('/api/open-interest', async (request) => {
+    const query = readQuery(request);
+    const selection = parseMarketSelection(query);
+    const days = parseHistoryDays(query.days);
+    const limit = parseOpenInterestLimit(query.limit);
+    const source = parseOpenInterestSource(query.source);
+    const since = Date.now() - days * 24 * 60 * 60_000;
+    const requestParams = {
+      ...selection,
+      limit,
+      since
+    };
+    const history =
+      source === 'coinglass'
+        ? await fetchCoinGlassOpenInterestHistory(requestParams)
+        : await fetchOpenInterestHistory(requestParams);
+
+    return {
+      ...selection,
+      metric: 'openInterest',
+      source,
+      days,
+      limit,
+      sourceTimeframe: history?.sourceTimeframe ?? selection.timeframe,
+      points: history?.points ?? []
+    };
+  });
+
+  app.get('/api/open-interest/snapshot', async (request) => {
+    const query = readQuery(request);
+    const selection = parseMarketSelection(query);
+    const snapshot = await fetchOpenInterestSnapshot(selection);
+
+    return {
+      ...selection,
+      metric: 'openInterestSnapshot',
+      sourceTimeframe: snapshot.sourceTimeframe,
+      point: snapshot.point
+    };
+  });
+
   app.register(async (wsApp) => {
-    wsApp.get('/ws/ohlcv', { websocket: true }, (connection, request) => {
+    wsApp.get('/ws/market', { websocket: true }, (connection, request) => {
       const socket = getSocket(connection as WebSocketConnection);
       const query = readQuery(request);
       const selection = parseMarketSelection(query);
       const limit = parseLimit(query.limit);
-      const pollMs = parsePollMs(query.pollMs);
-      let closed = false;
-
-      const push = async (kind: 'snapshot' | 'update') => {
-        try {
-          const bars = await fetchOhlcv({
-            ...selection,
-            limit
-          });
-
-          if (!closed) {
-            sendJson(socket, {
-              type: kind,
-              ...selection,
-              limit,
-              bars,
-              series: barsToSeries({
-                bars,
-                ...selection
-              }),
-              serverTime: Date.now()
-            });
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Unknown market data error';
-          if (!closed) {
-            sendJson(socket, {
-              type: 'error',
-              ...selection,
-              message,
-              serverTime: Date.now()
-            });
+      const tradeLimit = parseTradeLimit(query.tradeLimit);
+      const orderBookLimit = parseOrderBookLimit(query.orderBookLimit);
+      const channels = parseMarketChannels(query.channels);
+      const stream = watchMarketRealtime(
+        {
+          ...selection,
+          limit,
+          tradeLimit,
+          orderBookLimit,
+          channels
+        },
+        {
+          onUpdate(update) {
+            sendJson(socket, update);
+          },
+          onError(error) {
+            sendJson(socket, error);
           }
         }
-      };
-
-      void push('snapshot');
-      const timer = setInterval(() => {
-        void push('update');
-      }, pollMs);
+      );
 
       socket.on('close', () => {
-        closed = true;
-        clearInterval(timer);
+        void stream.close();
       });
 
       socket.on('error', () => {
-        closed = true;
-        clearInterval(timer);
+        void stream.close();
       });
     });
   });

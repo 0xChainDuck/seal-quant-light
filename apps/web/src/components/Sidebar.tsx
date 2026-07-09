@@ -1,20 +1,14 @@
-import { LayoutGrid, PanelsTopLeft, Plus, Rows3 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchExchanges } from '../lib/api.js';
-import { useWorkspaceStore, type WorkspaceLayout } from '../state/workspace.js';
-
-const LAYOUTS: Array<{ value: WorkspaceLayout; icon: typeof PanelsTopLeft; title: string }> = [
-  { value: 1, icon: PanelsTopLeft, title: 'Single layout' },
-  { value: 2, icon: Rows3, title: 'Two column layout' },
-  { value: 4, icon: LayoutGrid, title: 'Grid layout' }
-];
+import { displayMarketSymbol } from '../lib/symbols.js';
+import { useWorkspaceStore } from '../state/workspace.js';
 
 export function Sidebar() {
-  const layout = useWorkspaceStore((state) => state.layout);
+  const activePanelId = useWorkspaceStore((state) => state.activePanelId);
   const panels = useWorkspaceStore((state) => state.panels);
-  const setLayout = useWorkspaceStore((state) => state.setLayout);
   const addPanel = useWorkspaceStore((state) => state.addPanel);
-  const updatePanel = useWorkspaceStore((state) => state.updatePanel);
+  const selectPanel = useWorkspaceStore((state) => state.selectPanel);
 
   const exchanges = useQuery({
     queryKey: ['exchanges'],
@@ -34,22 +28,9 @@ export function Sidebar() {
       </div>
 
       <div className="toolbar-row">
-        {LAYOUTS.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button
-              className={layout === item.value ? 'icon-button is-active' : 'icon-button'}
-              key={item.value}
-              type="button"
-              title={item.title}
-              onClick={() => setLayout(item.value)}
-            >
-              <Icon size={17} />
-            </button>
-          );
-        })}
-        <button className="icon-button add-button" type="button" title="Add panel" onClick={addPanel}>
+        <button className="icon-button add-button is-wide" type="button" title="Add panel" onClick={addPanel}>
           <Plus size={17} />
+          <span>Add Market</span>
         </button>
       </div>
 
@@ -58,18 +39,14 @@ export function Sidebar() {
         <div className="panel-list">
           {panels.map((panel) => (
             <button
-              className="panel-list-item"
+              className={panel.id === activePanelId ? 'panel-list-item is-active' : 'panel-list-item'}
               key={panel.id}
               type="button"
-              onClick={() =>
-                updatePanel(panel.id, {
-                  limit: panel.limit === 500 ? 1000 : 500
-                })
-              }
+              onClick={() => selectPanel(panel.id)}
             >
-              <strong>{panel.symbol}</strong>
+              <strong>{displayMarketSymbol(panel.symbol, panel.quoteAsset)}</strong>
               <span>
-                {panel.exchange} / {panel.timeframe} / {panel.limit}
+                {panel.exchange} / {panel.marketType} / {panel.quoteAsset} / {panel.timeframe}
               </span>
             </button>
           ))}

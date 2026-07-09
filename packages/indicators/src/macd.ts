@@ -69,6 +69,8 @@ export const macd: IndicatorDefinition<MacdParams> = {
           id: `macd-${params.fast}-${params.slow}`,
           name: 'MACD',
           pane: 'oscillator',
+          paneId: 'macd',
+          paneName: `MACD ${params.fast} ${params.slow} ${params.signal}`,
           style: 'line',
           color: '#00c2a8',
           values: line
@@ -77,6 +79,8 @@ export const macd: IndicatorDefinition<MacdParams> = {
           id: `macd-signal-${params.signal}`,
           name: 'Signal',
           pane: 'oscillator',
+          paneId: 'macd',
+          paneName: `MACD ${params.fast} ${params.slow} ${params.signal}`,
           style: 'line',
           color: '#ffbf69',
           values: signal
@@ -85,6 +89,8 @@ export const macd: IndicatorDefinition<MacdParams> = {
           id: `macd-histogram-${params.fast}-${params.slow}-${params.signal}`,
           name: 'Histogram',
           pane: 'oscillator',
+          paneId: 'macd',
+          paneName: `MACD ${params.fast} ${params.slow} ${params.signal}`,
           style: 'histogram',
           color: '#6ee7b7',
           values: histogram

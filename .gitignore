@@ -5,6 +5,9 @@ dist
 .turbo
 .DS_Store
 *.log
+.env
+.env.*
+!.env.example
 data/cache/*
 output/reports/*
 output/trades/*

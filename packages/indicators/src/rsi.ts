@@ -70,6 +70,8 @@ export const rsi: IndicatorDefinition<RsiParams> = {
           id: `rsi-${params.period}`,
           name: `RSI ${params.period}`,
           pane: 'oscillator',
+          paneId: 'rsi',
+          paneName: `RSI ${params.period}`,
           style: 'line',
           color: '#a78bfa',
           values

@@ -11,25 +11,25 @@ export const SUPPORTED_EXCHANGES: SupportedExchange[] = [
   {
     id: 'binance',
     name: 'Binance',
-    marketTypes: ['spot', 'swap'],
+    marketTypes: ['spot', 'future'],
     defaultSymbol: 'BTC/USDT'
   },
   {
     id: 'okx',
     name: 'OKX',
-    marketTypes: ['spot', 'swap', 'future'],
+    marketTypes: ['spot', 'future'],
     defaultSymbol: 'BTC/USDT'
   },
   {
     id: 'bybit',
     name: 'Bybit',
-    marketTypes: ['spot', 'swap'],
+    marketTypes: ['spot', 'future'],
     defaultSymbol: 'BTC/USDT'
   },
   {
     id: 'bitget',
     name: 'Bitget',
-    marketTypes: ['spot', 'swap'],
+    marketTypes: ['spot', 'future'],
     defaultSymbol: 'BTC/USDT'
   }
 ];

@@ -3,16 +3,15 @@ import { Sidebar } from './components/Sidebar.js';
 import { useWorkspaceStore } from './state/workspace.js';
 
 export function WorkspacePage() {
-  const layout = useWorkspaceStore((state) => state.layout);
+  const activePanelId = useWorkspaceStore((state) => state.activePanelId);
   const panels = useWorkspaceStore((state) => state.panels);
+  const activePanel = panels.find((panel) => panel.id === activePanelId) ?? panels[0];
 
   return (
     <div className="workspace">
       <Sidebar />
-      <main className={`chart-grid layout-${layout}`}>
-        {panels.map((panel) => (
-          <ChartPanel key={panel.id} panel={panel} />
-        ))}
+      <main className="chart-grid layout-1">
+        {activePanel ? <ChartPanel key={activePanel.id} panel={activePanel} /> : null}
       </main>
     </div>
   );

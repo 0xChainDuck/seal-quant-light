@@ -2,19 +2,17 @@ import type { ExchangeId, MarketSelection, MarketType, Timeframe } from '@seal-q
 import type { IndicatorConfig } from '@seal-quant/indicators';
 import { create } from 'zustand';
 
-export type WorkspaceLayout = 1 | 2 | 4;
-
 export type ChartPanelConfig = MarketSelection & {
   id: string;
+  quoteAsset: string;
   limit: number;
-  pollMs: number;
   indicators: IndicatorConfig[];
 };
 
 type WorkspaceState = {
-  layout: WorkspaceLayout;
+  activePanelId: string;
   panels: ChartPanelConfig[];
-  setLayout: (layout: WorkspaceLayout) => void;
+  selectPanel: (panelId: string) => void;
   addPanel: () => void;
   removePanel: (panelId: string) => void;
   updatePanel: (panelId: string, patch: Partial<Omit<ChartPanelConfig, 'id'>>) => void;
@@ -39,9 +37,9 @@ function createPanel(overrides: Partial<ChartPanelConfig> = {}): ChartPanelConfi
     exchange: 'binance',
     marketType: 'spot',
     symbol: 'BTC/USDT',
+    quoteAsset: 'USDT',
     timeframe: '1m',
     limit: 500,
-    pollMs: 10_000,
     indicators: defaultIndicators(),
     ...overrides
   };
@@ -51,39 +49,52 @@ function indicatorKey(indicator: IndicatorConfig): string {
   return `${indicator.id}:${JSON.stringify(indicator.params ?? {})}`;
 }
 
+const initialPanels = [
+  createPanel(),
+  createPanel({
+    exchange: 'okx',
+    timeframe: '5m',
+    indicators: [
+      { id: 'ema', params: { period: 20 } },
+      { id: 'macd' },
+      { id: 'bollinger' }
+    ]
+  })
+];
+
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
-  layout: 2,
-  panels: [
-    createPanel(),
-    createPanel({
-      exchange: 'okx',
-      timeframe: '5m',
-      indicators: [
-        { id: 'ema', params: { period: 20 } },
-        { id: 'macd' },
-        { id: 'bollinger' }
-      ]
-    })
-  ],
-  setLayout(layout) {
-    set({ layout });
+  activePanelId: initialPanels[0]?.id ?? '',
+  panels: initialPanels,
+  selectPanel(panelId) {
+    set({ activePanelId: panelId });
   },
   addPanel() {
+    const panel = createPanel({
+      exchange: 'bybit',
+      marketType: 'spot',
+      timeframe: '15m'
+    });
+
     set((state) => ({
-      panels: [
-        ...state.panels,
-        createPanel({
-          exchange: 'bybit',
-          marketType: 'spot',
-          timeframe: '15m'
-        })
-      ]
+      activePanelId: panel.id,
+      panels: [...state.panels, panel]
     }));
   },
   removePanel(panelId) {
-    set((state) => ({
-      panels: state.panels.length > 1 ? state.panels.filter((panel) => panel.id !== panelId) : state.panels
-    }));
+    set((state) => {
+      if (state.panels.length <= 1) {
+        return state;
+      }
+
+      const panels = state.panels.filter((panel) => panel.id !== panelId);
+      const activePanelId =
+        state.activePanelId === panelId ? (panels[0]?.id ?? state.activePanelId) : state.activePanelId;
+
+      return {
+        activePanelId,
+        panels
+      };
+    });
   },
   updatePanel(panelId, patch) {
     set((state) => ({
@@ -112,5 +123,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
 }));
 
 export const EXCHANGE_OPTIONS: ExchangeId[] = ['binance', 'okx', 'bybit', 'bitget'];
-export const MARKET_TYPE_OPTIONS: MarketType[] = ['spot', 'swap', 'future'];
+export const EXCHANGE_MARKET_TYPES: Record<ExchangeId, MarketType[]> = {
+  binance: ['spot', 'future'],
+  okx: ['spot', 'future'],
+  bybit: ['spot', 'future'],
+  bitget: ['spot', 'future']
+};
 export const TIMEFRAME_OPTIONS: Timeframe[] = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d'];
