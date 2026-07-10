@@ -1,16 +1,32 @@
 import ccxt from 'ccxt';
-import type { Bar, ExchangeId, MarketType, Timeframe } from '@seal-quant/core';
+import { timeframeToMs, type Bar, type ExchangeId, type MarketType, type Timeframe } from '@seal-quant/core';
 import { SUPPORTED_EXCHANGES } from './exchanges.js';
 import { resolveCcxtProxyConfig } from './proxy.js';
 
 type CcxtMarket = {
   symbol: string;
+  base?: string;
+  quote?: string;
+  settle?: string;
   type?: string;
   active?: boolean;
   spot?: boolean;
   swap?: boolean;
   future?: boolean;
   contract?: boolean;
+  linear?: boolean;
+};
+
+type CcxtTicker = {
+  symbol?: string;
+  last?: number | string;
+  close?: number | string;
+  percentage?: number | string;
+  change?: number | string;
+  high?: number | string;
+  low?: number | string;
+  baseVolume?: number | string;
+  quoteVolume?: number | string;
 };
 
 type CcxtExchange = {
@@ -22,6 +38,10 @@ type CcxtExchange = {
     since?: number,
     limit?: number
   ) => Promise<number[][]>;
+  fetchTickers?: (
+    symbols?: string[],
+    params?: Record<string, unknown>
+  ) => Promise<Record<string, CcxtTicker>>;
   fetchOpenInterestHistory?: (
     symbol: string,
     timeframe?: string,
@@ -91,6 +111,11 @@ type MarketSymbolCacheEntry = {
   expiresAt: number;
 };
 
+type MarketTickerCacheEntry = {
+  tickers: MarketTicker[];
+  expiresAt: number;
+};
+
 export type FetchOhlcvRequest = {
   exchange: ExchangeId;
   marketType: MarketType;
@@ -125,8 +150,28 @@ export type OpenInterestSnapshot = {
   point: OpenInterestPoint | null;
 };
 
+export type MarketTicker = {
+  exchange: ExchangeId;
+  marketType: MarketType;
+  symbol: string;
+  baseAsset: string;
+  quoteAsset: string;
+  settleAsset: string | null;
+  price: number | null;
+  change24h: number | null;
+  high24h: number | null;
+  low24h: number | null;
+  baseVolume24h: number | null;
+  quoteVolume24h: number | null;
+};
+
 const MARKET_SYMBOL_CACHE_TTL_MS = 6 * 60 * 60_000;
+const MARKET_TICKER_CACHE_TTL_MS = 30_000;
+const BINANCE_OPEN_INTEREST_RETENTION_MS = 30 * 24 * 60 * 60_000;
+const BINANCE_OPEN_INTEREST_LIMIT_PER_CALL = 500;
+const MAX_OPEN_INTEREST_PAGINATION_CALLS = 50;
 const marketSymbolCache = new Map<string, MarketSymbolCacheEntry>();
+const marketTickerCache = new Map<string, MarketTickerCacheEntry>();
 
 function marketSymbolCacheKey(exchangeId: ExchangeId, marketType: MarketType): string {
   return `${exchangeId}:${marketType}`;
@@ -181,12 +226,18 @@ export async function loadCcxtProxyModules(exchange: CcxtExchange): Promise<void
   }
 }
 
-export function createCcxtExchange(exchange: ExchangeId, marketType: MarketType): CcxtExchange {
+export function createCcxtExchange(
+  exchange: ExchangeId,
+  marketType: MarketType
+): CcxtExchange {
   const exchangeConstructors = ccxt as unknown as Record<string, CcxtConstructor | undefined>;
   return createExchange(exchangeConstructors[exchange], exchange, marketType);
 }
 
-export function createCcxtProExchange(exchange: ExchangeId, marketType: MarketType): CcxtProExchange {
+export function createCcxtProExchange(
+  exchange: ExchangeId,
+  marketType: MarketType
+): CcxtProExchange {
   const ccxtWithPro = ccxt as unknown as {
     pro?: Record<string, CcxtProConstructor | undefined>;
   };
@@ -194,11 +245,24 @@ export function createCcxtProExchange(exchange: ExchangeId, marketType: MarketTy
   return createExchange(ccxtWithPro.pro?.[exchange], exchange, marketType);
 }
 
-export async function fetchOhlcv(request: FetchOhlcvRequest): Promise<Bar[]> {
-  const limit = request.limit ?? 500;
-  const exchange = createCcxtExchange(request.exchange, request.marketType);
+async function withCcxtRestExchange<TResult>(
+  exchangeId: ExchangeId,
+  marketType: MarketType,
+  run: (exchange: CcxtExchange) => Promise<TResult>
+): Promise<TResult> {
+  const exchange = createCcxtExchange(exchangeId, marketType);
 
   try {
+    return await run(exchange);
+  } finally {
+    await exchange.close?.();
+  }
+}
+
+export async function fetchOhlcv(request: FetchOhlcvRequest): Promise<Bar[]> {
+  const limit = request.limit ?? 500;
+
+  return withCcxtRestExchange(request.exchange, request.marketType, async (exchange) => {
     const rows = await exchange.fetchOHLCV(request.symbol, request.timeframe, request.since, limit);
 
     return rows
@@ -220,9 +284,7 @@ export async function fetchOhlcv(request: FetchOhlcvRequest): Promise<Bar[]> {
           Number.isFinite(bar.volume)
       )
       .sort((a, b) => a.ts - b.ts);
-  } finally {
-    await exchange.close?.();
-  }
+  });
 }
 
 export function resolveOpenInterestTimeframe(exchange: ExchangeId, timeframe: Timeframe): Timeframe {
@@ -247,6 +309,46 @@ export function resolveOpenInterestTimeframe(exchange: ExchangeId, timeframe: Ti
   }
 
   return timeframe;
+}
+
+function resolveOpenInterestSince(
+  exchange: ExchangeId,
+  timeframe: Timeframe,
+  since: number | undefined
+): number | undefined {
+  if (exchange !== 'binance' || since === undefined) {
+    return since;
+  }
+
+  // Binance rejects startTime on the exact 30-day retention edge.
+  const retentionFloor = Date.now() - BINANCE_OPEN_INTEREST_RETENTION_MS + timeframeToMs(timeframe);
+  return Math.max(since, retentionFloor);
+}
+
+function resolveOpenInterestHistoryParams(
+  exchange: ExchangeId,
+  timeframe: Timeframe,
+  since: number | undefined
+): Record<string, unknown> {
+  const params: Record<string, unknown> = {
+    paginate: true
+  };
+
+  if (exchange !== 'binance' || since === undefined) {
+    return params;
+  }
+
+  const now = Date.now();
+  const stepMs = timeframeToMs(timeframe) * BINANCE_OPEN_INTEREST_LIMIT_PER_CALL;
+  const paginationCalls = Math.ceil(Math.max(0, now - since) / stepMs);
+
+  return {
+    ...params,
+    paginationCalls: Math.min(
+      Math.max(paginationCalls, 1),
+      MAX_OPEN_INTEREST_PAGINATION_CALLS
+    )
+  };
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -295,9 +397,7 @@ export async function fetchOpenInterestHistory(
     };
   }
 
-  const exchange = createCcxtExchange(request.exchange, request.marketType);
-
-  try {
+  return withCcxtRestExchange(request.exchange, request.marketType, async (exchange) => {
     if (!exchange.fetchOpenInterestHistory || exchange.has?.fetchOpenInterestHistory === false) {
       return {
         sourceTimeframe,
@@ -305,12 +405,13 @@ export async function fetchOpenInterestHistory(
       };
     }
 
+    const since = resolveOpenInterestSince(request.exchange, sourceTimeframe, request.since);
     const rows = await exchange.fetchOpenInterestHistory(
       request.symbol,
       sourceTimeframe,
-      request.since,
+      since,
       request.limit ?? 5000,
-      { paginate: true }
+      resolveOpenInterestHistoryParams(request.exchange, sourceTimeframe, since)
     );
 
     return {
@@ -320,9 +421,7 @@ export async function fetchOpenInterestHistory(
         .filter((point): point is OpenInterestPoint => point !== null)
         .sort((a, b) => a.ts - b.ts)
     };
-  } finally {
-    await exchange.close?.();
-  }
+  });
 }
 
 export async function fetchOpenInterestSnapshot(
@@ -337,9 +436,7 @@ export async function fetchOpenInterestSnapshot(
     };
   }
 
-  const exchange = createCcxtExchange(request.exchange, request.marketType);
-
-  try {
+  return withCcxtRestExchange(request.exchange, request.marketType, async (exchange) => {
     if (!exchange.fetchOpenInterest || exchange.has?.fetchOpenInterest === false) {
       return {
         sourceTimeframe,
@@ -354,9 +451,7 @@ export async function fetchOpenInterestSnapshot(
       sourceTimeframe,
       point: row ? toOpenInterestPoint(row, Date.now()) : null
     };
-  } finally {
-    await exchange.close?.();
-  }
+  });
 }
 
 function matchesMarketType(market: CcxtMarket, marketType: MarketType): boolean {
@@ -371,6 +466,87 @@ function matchesMarketType(market: CcxtMarket, marketType: MarketType): boolean 
   return market.contract === true || market.swap === true || market.future === true || market.type === 'swap' || market.type === 'future';
 }
 
+function assetFromSymbol(symbol: string, side: 'base' | 'quote'): string {
+  const [base = '', quoteAndSettle = ''] = symbol.split('/');
+  if (side === 'base') {
+    return base.toUpperCase();
+  }
+
+  const [quote = '', settle = ''] = quoteAndSettle.split(':');
+  return (settle || quote).split('-')[0]!.toUpperCase();
+}
+
+function tickerChangePercent(ticker: CcxtTicker, price: number | null): number | null {
+  const percentage = finiteNumber(ticker.percentage);
+  if (percentage !== null) {
+    return percentage;
+  }
+
+  const change = finiteNumber(ticker.change);
+  const open = price !== null && change !== null ? price - change : null;
+  return open !== null && open !== 0 && change !== null ? (change / open) * 100 : null;
+}
+
+export async function fetchMarketTickers(
+  exchangeId: ExchangeId,
+  marketType: MarketType,
+  options: { refresh?: boolean } = {}
+): Promise<MarketTicker[]> {
+  const cacheKey = marketSymbolCacheKey(exchangeId, marketType);
+  const cached = marketTickerCache.get(cacheKey);
+  if (!options.refresh && cached && cached.expiresAt > Date.now()) {
+    return cached.tickers;
+  }
+
+  const tickers = await withCcxtRestExchange(exchangeId, marketType, async (exchange) => {
+    if (!exchange.fetchTickers || exchange.has?.fetchTickers === false) {
+      return [];
+    }
+
+    const markets = await exchange.loadMarkets();
+    const marketBySymbol = new Map(
+      Object.values(markets)
+        .filter((market) => market.active !== false)
+        .filter((market) => matchesMarketType(market, marketType))
+        .map((market) => [market.symbol, market])
+    );
+    const response = await exchange.fetchTickers();
+
+    return Object.entries(response).flatMap(([key, ticker]) => {
+      const symbol = ticker.symbol ?? key;
+      const market = marketBySymbol.get(symbol);
+      if (!market) {
+        return [];
+      }
+
+      const price = finiteNumber(ticker.last ?? ticker.close);
+      const quoteAsset = (market.settle ?? market.quote ?? assetFromSymbol(symbol, 'quote')).toUpperCase();
+
+      return [{
+        exchange: exchangeId,
+        marketType,
+        symbol,
+        baseAsset: (market.base ?? assetFromSymbol(symbol, 'base')).toUpperCase(),
+        quoteAsset,
+        settleAsset: market.settle?.toUpperCase() ?? null,
+        price,
+        change24h: tickerChangePercent(ticker, price),
+        high24h: finiteNumber(ticker.high),
+        low24h: finiteNumber(ticker.low),
+        baseVolume24h: finiteNumber(ticker.baseVolume),
+        quoteVolume24h: finiteNumber(ticker.quoteVolume)
+      }];
+    }).sort((a, b) => (b.quoteVolume24h ?? 0) - (a.quoteVolume24h ?? 0));
+  });
+
+  marketTickerCache.set(cacheKey, {
+    tickers,
+    expiresAt: Date.now() + MARKET_TICKER_CACHE_TTL_MS
+  });
+
+  return tickers;
+}
+
 export async function fetchMarketSymbols(
   exchangeId: ExchangeId,
   marketType: MarketType,
@@ -382,9 +558,7 @@ export async function fetchMarketSymbols(
     return cached.symbols;
   }
 
-  const exchange = createCcxtExchange(exchangeId, marketType);
-
-  try {
+  return withCcxtRestExchange(exchangeId, marketType, async (exchange) => {
     const markets = await exchange.loadMarkets();
     const symbols = Object.values(markets)
       .filter((market) => market.active !== false)
@@ -400,14 +574,13 @@ export async function fetchMarketSymbols(
     });
 
     return uniqueSymbols;
-  } finally {
-    await exchange.close?.();
-  }
+  });
 }
 
 export function clearMarketSymbolCache(exchangeId?: ExchangeId, marketType?: MarketType): void {
   if (exchangeId && marketType) {
     marketSymbolCache.delete(marketSymbolCacheKey(exchangeId, marketType));
+    marketTickerCache.delete(marketSymbolCacheKey(exchangeId, marketType));
     return;
   }
 
@@ -415,12 +588,14 @@ export function clearMarketSymbolCache(exchangeId?: ExchangeId, marketType?: Mar
     for (const key of marketSymbolCache.keys()) {
       if (key.startsWith(`${exchangeId}:`)) {
         marketSymbolCache.delete(key);
+        marketTickerCache.delete(key);
       }
     }
     return;
   }
 
   marketSymbolCache.clear();
+  marketTickerCache.clear();
 }
 
 export function getSupportedExchanges() {

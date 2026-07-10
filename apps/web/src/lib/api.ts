@@ -1,6 +1,7 @@
 import type {
   BarSeries,
   ExchangeId,
+  MarketOverview,
   MarketSelection,
   MarketType,
   OrderBookSnapshot,
@@ -26,6 +27,8 @@ export type MarketsResponse = {
   marketType: MarketType;
   symbols: string[];
 };
+
+export type MarketOverviewResponse = MarketOverview;
 
 export type OhlcvResponse = {
   limit: number;
@@ -125,6 +128,26 @@ export async function fetchMarketSymbols(
   }
 
   return response.json() as Promise<MarketsResponse>;
+}
+
+export async function fetchMarketOverview(
+  exchange: ExchangeId,
+  marketType: MarketType,
+  quoteAsset = 'USDT',
+  limit = 200
+): Promise<MarketOverviewResponse> {
+  const url = new URL(`${SERVER_URL}/api/market-overview`);
+  url.searchParams.set('exchange', exchange);
+  url.searchParams.set('marketType', marketType);
+  url.searchParams.set('quoteAsset', quoteAsset);
+  url.searchParams.set('limit', String(limit));
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch market overview: ${response.status}`);
+  }
+
+  return response.json() as Promise<MarketOverviewResponse>;
 }
 
 export async function fetchOhlcvPage(

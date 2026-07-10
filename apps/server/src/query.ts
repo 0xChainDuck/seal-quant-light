@@ -39,6 +39,22 @@ export function parseOpenInterestLimit(value: unknown): number {
   return Math.min(Math.max(parsed, 100), 10_000);
 }
 
+export function parseMarketOverviewLimit(value: unknown): number {
+  const raw = firstString(value);
+  const parsed = raw ? Number.parseInt(raw, 10) : 200;
+
+  if (!Number.isFinite(parsed)) {
+    return 200;
+  }
+
+  return Math.min(Math.max(parsed, 20), 500);
+}
+
+export function parseQuoteAsset(value: unknown): string {
+  const raw = firstString(value)?.trim().toUpperCase() ?? 'USDT';
+  return /^[A-Z0-9]{2,12}$/.test(raw) ? raw : 'USDT';
+}
+
 export function parseOpenInterestSource(value: unknown): 'ccxt' | 'coinglass' {
   const raw = firstString(value);
   return raw === 'coinglass' ? 'coinglass' : 'ccxt';

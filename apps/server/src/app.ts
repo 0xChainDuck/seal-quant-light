@@ -6,6 +6,7 @@ import {
   fetchCoinGlassAggregateOpenInterestHistory,
   fetchCoinGlassOpenInterestHistory,
   fetchMarketSymbols,
+  fetchMarketOverview,
   fetchOpenInterestHistory,
   fetchOpenInterestSnapshot,
   fetchOhlcv,
@@ -18,10 +19,12 @@ import {
   parseLimit,
   parseHistoryDays,
   parseMarketChannels,
+  parseMarketOverviewLimit,
   parseMarketSelection,
   parseOpenInterestLimit,
   parseOpenInterestSource,
   parseOrderBookLimit,
+  parseQuoteAsset,
   parseTimestamp,
   parseTradeLimit
 } from './query.js';
@@ -118,6 +121,21 @@ export function buildServer() {
       marketType: selection.marketType,
       symbols
     };
+  });
+
+  app.get('/api/market-overview', async (request) => {
+    const query = readQuery(request);
+    const selection = parseMarketSelection(query);
+    const quoteAsset = parseQuoteAsset(query.quoteAsset);
+    const limit = parseMarketOverviewLimit(query.limit);
+
+    return fetchMarketOverview({
+      exchange: selection.exchange,
+      marketType: selection.marketType,
+      quoteAsset,
+      limit,
+      refresh: query.refresh === '1' || query.refresh === 'true'
+    });
   });
 
   app.get('/api/ohlcv', async (request) => {

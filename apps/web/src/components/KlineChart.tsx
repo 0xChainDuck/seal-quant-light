@@ -12,7 +12,7 @@ import {
   type MouseEventParams,
   type Time
 } from 'lightweight-charts';
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatPrice, inferPricePrecision, toPriceFormat } from '../lib/format.js';
 
 type KlineChartProps = {
@@ -133,6 +133,34 @@ function updateSeriesData(
   }
 
   return dataMeta(data);
+}
+
+function countPrependedPoints(previous: DataMeta | null, next: readonly ChartDataPoint[]): number {
+  if (previous?.firstTime === null || previous?.firstTime === undefined) {
+    return 0;
+  }
+
+  const exactIndex = next.findIndex((point) => point.time === previous.firstTime);
+  if (exactIndex >= 0) {
+    return exactIndex;
+  }
+
+  let count = 0;
+  for (const point of next) {
+    if (point.time >= previous.firstTime) {
+      break;
+    }
+    count += 1;
+  }
+
+  return count;
+}
+
+function shiftVisibleRange(range: VisibleLogicalRange, offset: number): VisibleLogicalRange {
+  return {
+    from: range.from + offset,
+    to: range.to + offset
+  };
 }
 
 function toHoverTime(time: Time | undefined): number | null {
@@ -546,7 +574,7 @@ function StudyPaneChart({
     };
   }, [onHoverTime, onRegisterChart, onVisibleRangeChange, pane.id, paneStructureKey]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!chartRef.current) {
       return;
     }
@@ -589,6 +617,7 @@ export function KlineChart({
   const initializedRef = useRef(false);
   const previousSeriesKeyRef = useRef<string | null>(null);
   const candlesLengthRef = useRef(0);
+  const renderPrependedCountRef = useRef(0);
   const historyStateRef = useRef({
     hasMoreHistory,
     loadingHistory,
@@ -606,10 +635,38 @@ export function KlineChart({
 
     chartRegistryRef.current.set(id, chart);
     if (visibleRangeRef.current) {
-      chart.timeScale().setVisibleLogicalRange(visibleRangeRef.current);
+      try {
+        syncingRangeRef.current = true;
+        chart.timeScale().setVisibleLogicalRange(visibleRangeRef.current);
+      } finally {
+        syncingRangeRef.current = false;
+      }
     }
   }, []);
+  const applyVisibleRangeToCharts = useCallback((range: VisibleLogicalRange) => {
+    visibleRangeRef.current = range;
+
+    try {
+      syncingRangeRef.current = true;
+      for (const chart of chartRegistryRef.current.values()) {
+        chart.timeScale().setVisibleLogicalRange(range);
+      }
+    } finally {
+      syncingRangeRef.current = false;
+    }
+  }, []);
+  const restoreVisibleRangeAfterDataChange = useCallback(
+    (range: VisibleLogicalRange) => {
+      applyVisibleRangeToCharts(range);
+      requestAnimationFrame(() => applyVisibleRangeToCharts(range));
+    },
+    [applyVisibleRangeToCharts]
+  );
   const syncVisibleRange = useCallback<LogicalRangeHandler>((sourceId, range) => {
+    if (syncingRangeRef.current) {
+      return visibleRangeRef.current;
+    }
+
     const nextRange = range
       ? (() => {
           const span = range.to - range.from;
@@ -679,6 +736,7 @@ export function KlineChart({
     [chartData.priceIndicators, chartData.pricePrecision, seriesKey]
   );
   candlesLengthRef.current = chartData.candles.length;
+  renderPrependedCountRef.current = countPrependedPoints(candleMetaRef.current, chartData.candles);
 
   const activeTime = hoverTime ?? chartData.latestTime;
   const activeBar = activeTime === null ? null : (chartData.barsByTime.get(activeTime) ?? null);
@@ -699,7 +757,10 @@ export function KlineChart({
       return;
     }
 
-    const savedRange = visibleRangeRef.current;
+    const savedRange =
+      visibleRangeRef.current && renderPrependedCountRef.current > 0
+        ? shiftVisibleRange(visibleRangeRef.current, renderPrependedCountRef.current)
+        : visibleRangeRef.current;
     const chart = createBaseChart(priceContainer);
     const priceFormat = toPriceFormat(chartData.pricePrecision);
     const savedPriceRange = visiblePriceRangeRef.current;
@@ -822,7 +883,7 @@ export function KlineChart({
       chart.timeScale().scrollToPosition(FUTURE_RIGHT_OFFSET, false);
       initializedRef.current = true;
     } else if (savedRange) {
-      chart.timeScale().setVisibleLogicalRange(savedRange);
+      restoreVisibleRangeAfterDataChange(savedRange);
     }
 
     if (savedPriceRange) {
@@ -846,9 +907,9 @@ export function KlineChart({
       volumeMetaRef.current = null;
       priceIndicatorMetaRefs.current = new Map();
     };
-  }, [handleHoverTime, priceChartStructureKey, registerChart, syncVisibleRange]);
+  }, [handleHoverTime, priceChartStructureKey, registerChart, restoreVisibleRangeAfterDataChange, syncVisibleRange]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const refs = priceChartRef.current;
     if (!refs) {
       return;
@@ -856,10 +917,7 @@ export function KlineChart({
 
     const previousCandleMeta = candleMetaRef.current;
     const savedRange = visibleRangeRef.current;
-    const prependedCount =
-      previousCandleMeta?.firstTime === null || previousCandleMeta?.firstTime === undefined
-        ? 0
-        : chartData.candles.findIndex((candle) => candle.time === previousCandleMeta.firstTime);
+    const prependedCount = countPrependedPoints(previousCandleMeta, chartData.candles);
     const forceFullCandles = shouldSetFullData(previousCandleMeta, chartData.candles);
     const savedPriceRange = manualPriceScaleRef.current
       ? refs.chart.priceScale('right').getVisibleRange()
@@ -896,17 +954,14 @@ export function KlineChart({
     }
 
     if (forceFullCandles && savedRange && prependedCount > 0) {
-      refs.chart.timeScale().setVisibleLogicalRange({
-        from: savedRange.from + prependedCount,
-        to: savedRange.to + prependedCount
-      });
+      restoreVisibleRangeAfterDataChange(shiftVisibleRange(savedRange, prependedCount));
     }
 
     if (savedPriceRange) {
       refs.chart.priceScale('right').setVisibleRange(savedPriceRange);
       refs.chart.priceScale('right').setAutoScale(false);
     }
-  }, [chartData.candles, chartData.priceIndicators, chartData.volume]);
+  }, [chartData.candles, chartData.priceIndicators, chartData.volume, restoreVisibleRangeAfterDataChange]);
 
   return (
     <div

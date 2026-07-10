@@ -1,15 +1,22 @@
 # Seal Quant Light
 
-A lightweight TypeScript quant research workspace for exchange data, reusable indicators, multi-timeframe aggregation, and real-time charting.
+TypeScript market intelligence and indicator research workspace. The application combines exchange-native ccxt/ccxt.pro data with CoinGlass derivatives data behind shared domain models.
 
-## First version
+## Product surfaces
 
-- `apps/server`: Fastify API over ccxt with REST OHLCV and polling WebSocket streams.
-- `apps/web`: Vite + React workspace for multi-exchange chart panels.
-- `packages/core`: shared market types, timeframes, and series helpers.
-- `packages/market`: exchange provider and OHLCV aggregation.
-- `packages/indicators`: reusable indicator engine and built-in studies.
-- `packages/chart-adapter`: serializable chart data adapters.
+- `/`: market dashboard with exchange, spot/futures, quote-asset, search and sortable market metrics.
+- `/market/:asset`: single-asset terminal with exchange/market selection, real-time K-line, indicators, order book and trades.
+
+## Architecture
+
+- `apps/server`: Fastify API and WebSocket gateway. Provider-specific payloads stop here.
+- `apps/web`: React product shell, market dashboard and research terminal.
+- `packages/core`: provider-independent market, series and overview types.
+- `packages/market`: ccxt, ccxt.pro and CoinGlass adapters plus the unified market catalog service.
+- `packages/indicators`: reusable K-line indicator registry and computation engine.
+- `packages/chart-adapter`: conversion from domain series to lightweight-charts data.
+
+The dashboard consumes `/api/market-overview`, which merges ccxt ticker data with CoinGlass market cap, aggregate open interest, funding and derivatives fields. Components do not parse provider payloads directly.
 
 ## Commands
 
@@ -19,14 +26,16 @@ pnpm install
 pnpm dev
 ```
 
-The server defaults to `http://localhost:8787`; the web app defaults to `http://localhost:5173`.
+- Web: `http://127.0.0.1:5173`
+- Server: `http://127.0.0.1:8787`
 
 ## Environment
 
-Copy `.env.example` to `.env`, then fill in the CoinGlass gateway key:
+Copy `.env.example` to `.env` and fill in the CoinGlass gateway key.
 
 ```bash
-SEAL_PROXY_ENABLED=1
+# 1: use the configured Clash proxy; 0: direct/system VPN networking.
+SEAL_PROXY_ENABLED=0
 SEAL_HTTP_PROXY=http://127.0.0.1:7890
 SEAL_HTTPS_PROXY=http://127.0.0.1:7890
 SEAL_WS_PROXY=http://127.0.0.1:7890
@@ -36,25 +45,11 @@ SEAL_NO_PROXY=localhost,127.0.0.1,::1
 COINGLASS_ENABLED=1
 COINGLASS_BASE_URL=http://vip.coinglass.site
 COINGLASS_API_KEY=cg_your_key
-COINGLASS_OPEN_INTEREST_HISTORY_PATH=/api/futures/open-interest/ohlc-history
-# Optional comma-separated fallbacks while checking official path variants:
-# COINGLASS_OPEN_INTEREST_HISTORY_PATHS=/api/futures/open-interest/ohlc-history,/api/futures/open-interest/history
+COINGLASS_OPEN_INTEREST_HISTORY_PATH=/api/futures/open-interest/history
 COINGLASS_AGGREGATE_OPEN_INTEREST_HISTORY_PATHS=/api/futures/open-interest/aggregated-history,/api/futures/open-interest/aggregated-history-chart
-# Optional extra query string for aggregate OI. Default requests already include USDT settle params:
-# COINGLASS_AGGREGATE_OPEN_INTEREST_QUERY=marginCoin=USDT
 COINGLASS_TIMEOUT_MS=12000
 ```
 
-CoinGlass is available as an independent server-side data source when `COINGLASS_API_KEY` is set.
-The server exposes a generic CoinGlass gateway proxy at `/api/coinglass/*`; for example:
+The browser never receives the CoinGlass key. The server injects `X-API-Key` and exposes a generic gateway at `/api/coinglass/*` for future data integrations.
 
-```bash
-curl "http://127.0.0.1:8787/api/coinglass/api/futures/coins-markets"
-```
-
-The server injects `X-API-Key`, so the browser never sees the CoinGlass key. Open-interest history can
-be requested explicitly from either source with `source=ccxt` or `source=coinglass`.
-The chart also has CoinGlass-only aggregate USDT open-interest indicators through `AGG OI` and `AGG OI-RSI`.
-
-When exchange or CoinGlass access needs Clash, keep `SEAL_PROXY_ENABLED=1` and point both HTTP and WSS
-proxy variables to the local Clash HTTP proxy. `pnpm dev` will load `.env` automatically.
+Environment variables are read when the server starts. Restart `pnpm dev` after switching proxy mode.

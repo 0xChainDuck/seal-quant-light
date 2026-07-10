@@ -32,7 +32,7 @@ function envFlag(value: string | undefined, fallback = true): boolean {
 }
 
 function proxyEnabled(): boolean {
-  return envFlag(envValue('SEAL_PROXY_ENABLED', 'PROXY_ENABLED'), true);
+  return envFlag(envValue('SEAL_PROXY_ENABLED', 'PROXY_ENABLED'), false);
 }
 
 function ccxtRoot(): string {

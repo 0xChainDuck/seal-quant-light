@@ -12,11 +12,9 @@ export type ChartPanelConfig = MarketSelection & {
 type WorkspaceState = {
   activePanelId: string;
   panels: ChartPanelConfig[];
-  selectPanel: (panelId: string) => void;
-  addPanel: () => void;
-  removePanel: (panelId: string) => void;
   updatePanel: (panelId: string, patch: Partial<Omit<ChartPanelConfig, 'id'>>) => void;
   toggleIndicator: (panelId: string, indicator: IndicatorConfig) => void;
+  openMarket: (selection: Pick<ChartPanelConfig, 'exchange' | 'marketType' | 'symbol' | 'quoteAsset'>) => void;
 };
 
 function createId(): string {
@@ -35,10 +33,10 @@ function createPanel(overrides: Partial<ChartPanelConfig> = {}): ChartPanelConfi
   return {
     id: createId(),
     exchange: 'binance',
-    marketType: 'spot',
-    symbol: 'BTC/USDT',
+    marketType: 'future',
+    symbol: 'BTC/USDT:USDT',
     quoteAsset: 'USDT',
-    timeframe: '1m',
+    timeframe: '15m',
     limit: 500,
     indicators: defaultIndicators(),
     ...overrides
@@ -49,53 +47,11 @@ function indicatorKey(indicator: IndicatorConfig): string {
   return `${indicator.id}:${JSON.stringify(indicator.params ?? {})}`;
 }
 
-const initialPanels = [
-  createPanel(),
-  createPanel({
-    exchange: 'okx',
-    timeframe: '5m',
-    indicators: [
-      { id: 'ema', params: { period: 20 } },
-      { id: 'macd' },
-      { id: 'bollinger' }
-    ]
-  })
-];
+const initialPanels = [createPanel()];
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   activePanelId: initialPanels[0]?.id ?? '',
   panels: initialPanels,
-  selectPanel(panelId) {
-    set({ activePanelId: panelId });
-  },
-  addPanel() {
-    const panel = createPanel({
-      exchange: 'bybit',
-      marketType: 'spot',
-      timeframe: '15m'
-    });
-
-    set((state) => ({
-      activePanelId: panel.id,
-      panels: [...state.panels, panel]
-    }));
-  },
-  removePanel(panelId) {
-    set((state) => {
-      if (state.panels.length <= 1) {
-        return state;
-      }
-
-      const panels = state.panels.filter((panel) => panel.id !== panelId);
-      const activePanelId =
-        state.activePanelId === panelId ? (panels[0]?.id ?? state.activePanelId) : state.activePanelId;
-
-      return {
-        activePanelId,
-        panels
-      };
-    });
-  },
   updatePanel(panelId, patch) {
     set((state) => ({
       panels: state.panels.map((panel) => (panel.id === panelId ? { ...panel, ...patch } : panel))
@@ -118,6 +74,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
             : [...panel.indicators, indicator]
         };
       })
+    }));
+  },
+  openMarket(selection) {
+    set((state) => ({
+      panels: state.panels.map((panel) =>
+        panel.id === state.activePanelId ? { ...panel, ...selection } : panel
+      )
     }));
   }
 }));

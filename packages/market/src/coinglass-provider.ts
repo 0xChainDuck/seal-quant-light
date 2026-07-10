@@ -37,6 +37,19 @@ export type CoinGlassProxyResponse = {
   body: unknown;
 };
 
+export type CoinGlassCoinMarket = {
+  symbol: string;
+  price: number | null;
+  change24h: number | null;
+  volume24h: number | null;
+  marketCap: number | null;
+  openInterest: number | null;
+  openInterestChange24h: number | null;
+  fundingRate: number | null;
+  longShortRatio: number | null;
+  liquidation24h: number | null;
+};
+
 type CacheEntry = {
   expiresAt: number;
   value: OpenInterestHistory;
@@ -44,7 +57,7 @@ type CacheEntry = {
 type OhlcCloseField = 'amount' | 'value';
 
 const DEFAULT_BASE_URL = 'http://vip.coinglass.site';
-const DEFAULT_HISTORY_PATH = '/api/futures/open-interest/ohlc-history';
+const DEFAULT_HISTORY_PATH = '/api/futures/open-interest/history';
 const DEFAULT_AGGREGATE_OPEN_INTEREST_HISTORY_PATHS = [
   '/api/futures/open-interest/aggregated-history',
   '/api/futures/open-interest/aggregated-history-chart'
@@ -52,6 +65,7 @@ const DEFAULT_AGGREGATE_OPEN_INTEREST_HISTORY_PATHS = [
 const DEFAULT_TIMEOUT_MS = 12_000;
 const CACHE_TTL_MS = 55_000;
 const historyCache = new Map<string, CacheEntry>();
+let coinMarketsCache: { expiresAt: number; value: CoinGlassCoinMarket[] } | null = null;
 
 const EXCHANGE_NAMES: Record<ExchangeId, string> = {
   binance: 'Binance',
@@ -429,6 +443,58 @@ export async function requestCoinGlass(
   }
 }
 
+export async function fetchCoinGlassCoinMarkets(): Promise<CoinGlassCoinMarket[]> {
+  if (coinMarketsCache && coinMarketsCache.expiresAt > Date.now()) {
+    return coinMarketsCache.value;
+  }
+
+  const response = await requestCoinGlass('/api/futures/coins-markets');
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`CoinGlass request failed: ${response.status}`);
+  }
+
+  const payload = response.body as CoinGlassPayload;
+  ensureSuccess(payload);
+  const rows = Array.isArray(payload.data) ? payload.data : [];
+  const value = rows.flatMap((row) => {
+    if (!row || typeof row !== 'object') {
+      return [];
+    }
+
+    const record = row as Record<string, unknown>;
+    const symbol = String(record.symbol ?? '').trim().toUpperCase();
+    if (!symbol) {
+      return [];
+    }
+
+    const longVolume = numberFrom(record, ['long_volume_usd_24h']);
+    const shortVolume = numberFrom(record, ['short_volume_usd_24h']);
+
+    return [{
+      symbol,
+      price: numberFrom(record, ['current_price', 'price']),
+      change24h: numberFrom(record, ['price_change_percent_24h']),
+      volume24h:
+        longVolume !== null || shortVolume !== null
+          ? (longVolume ?? 0) + (shortVolume ?? 0)
+          : null,
+      marketCap: numberFrom(record, ['market_cap_usd', 'market_cap']),
+      openInterest: numberFrom(record, ['open_interest_usd']),
+      openInterestChange24h: numberFrom(record, ['open_interest_change_percent_24h']),
+      fundingRate: numberFrom(record, ['avg_funding_rate_by_oi']),
+      longShortRatio: numberFrom(record, ['long_short_ratio_24h']),
+      liquidation24h: numberFrom(record, ['liquidation_usd_24h'])
+    }];
+  });
+
+  coinMarketsCache = {
+    value,
+    expiresAt: Date.now() + CACHE_TTL_MS
+  };
+
+  return value;
+}
+
 export async function fetchCoinGlassOpenInterestHistory(
   request: FetchOpenInterestHistoryRequest
 ): Promise<OpenInterestHistory | null> {
@@ -461,7 +527,7 @@ export async function fetchCoinGlassOpenInterestHistory(
       ensureSuccess(payload);
       const result = {
         sourceTimeframe,
-        points: parsePoints(payload)
+        points: parsePoints(payload, 'value')
       };
 
       historyCache.set(key, {

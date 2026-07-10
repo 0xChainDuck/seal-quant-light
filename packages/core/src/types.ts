@@ -72,3 +72,31 @@ export type MarketSelection = {
 };
 
 export type MarketStatus = 'idle' | 'loading' | 'live' | 'error';
+
+export type MarketSummary = {
+  exchange: ExchangeId;
+  marketType: MarketType;
+  symbol: string;
+  baseAsset: string;
+  quoteAsset: string;
+  price: number | null;
+  change24h: number | null;
+  high24h: number | null;
+  low24h: number | null;
+  volume24h: number | null;
+  marketCap: number | null;
+  openInterest: number | null;
+  openInterestChange24h: number | null;
+  fundingRate: number | null;
+  longShortRatio: number | null;
+  liquidation24h: number | null;
+};
+
+export type MarketOverview = {
+  exchange: ExchangeId;
+  marketType: MarketType;
+  quoteAsset: string;
+  sources: Array<'ccxt' | 'coinglass'>;
+  updatedAt: number;
+  markets: MarketSummary[];
+};
